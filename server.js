@@ -40,7 +40,7 @@ app.get('/inspect/:tool', async (req, res) => {
 });
 
 // POST /tools/call
-// Body: { tool: "getBaziDetail", params: { solarDatetime: "2026-05-18T12:00:00+08:00", gender: 1, eightCharProviderSect: 1 } }
+// Body: { tool: "getBaziDetail", params: { solarDatetime: "...", gender: 1, eightCharProviderSect: 1 } }
 app.post('/tools/call', async (req, res) => {
   const { tool, params } = req.body;
   if (!tool) return res.status(400).json({ error: 'tool name required' });
@@ -53,25 +53,8 @@ app.post('/tools/call', async (req, res) => {
       return res.status(404).json({ error: `Tool "${tool}" not found`, available: Object.keys(mod) });
     }
 
-    // bazi-mcp functions expect a date string directly, not an object
-    // Extract the date from solarDatetime param
-    let result;
-    if (tool === 'getChineseCalendar') {
-      // Pass solarDatetime string directly as the date param
-      result = await mod[tool](params.solarDatetime);
-    } else if (tool === 'getBaziDetail') {
-      // getBaziDetail may take (date, gender, sect)
-      result = await mod[tool](params.solarDatetime, params.gender, params.eightCharProviderSect);
-    } else if (tool === 'getSolarTimes') {
-      result = await mod[tool](params.solarDatetime);
-    } else {
-      // Generic: try passing solarDatetime first, then full params object
-      try {
-        result = await mod[tool](params.solarDatetime || params);
-      } catch(e) {
-        result = await mod[tool](params);
-      }
-    }
+    // All bazi-mcp tools expect a single data object
+    const result = await mod[tool](params);
 
     console.log(`[bazi-server] ${tool} result:`, JSON.stringify(result).slice(0, 400));
     res.json({ success: true, result });
