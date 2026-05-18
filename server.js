@@ -1,5 +1,4 @@
 // server.js — HTTP wrapper for bazi-mcp
-// Exposes bazi-mcp tools via simple REST API
 const express = require('express');
 const cors = require('cors');
 const app = express();
@@ -7,68 +6,73 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// Lazy-load bazi-mcp tools
-let baziTools = null;
+let baziModule = null;
 
-async function getBaziTools() {
-  if (baziTools) return baziTools;
-  try {
-    // Try different import paths for bazi-mcp
-    const mod = require('bazi-mcp');
-    baziTools = mod;
-    console.log('bazi-mcp loaded, exports:', Object.keys(mod));
-    return baziTools;
-  } catch(e) {
-    console.error('Failed to load bazi-mcp:', e.message);
-    throw e;
-  }
+async function getBaziModule() {
+  if (baziModule) return baziModule;
+  baziModule = require('bazi-mcp');
+  console.log('bazi-mcp loaded, exports:', Object.keys(baziModule));
+  return baziModule;
 }
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'bazi-mcp-server', time: new Date().toISOString() });
 });
 
-// ── POST /tools/call ──
+app.get('/tools', async (req, res) => {
+  try {
+    const mod = await getBaziModule();
+    res.json({ tools: Object.keys(mod) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /tools/call
 // Body: { tool: "getBaziDetail", params: { solarDatetime: "...", gender: 1, eightCharProviderSect: 1 } }
 app.post('/tools/call', async (req, res) => {
   const { tool, params } = req.body;
   if (!tool) return res.status(400).json({ error: 'tool name required' });
 
   try {
-    const tools = await getBaziTools();
-    console.log(`[bazi-server] Calling tool: ${tool}`, params);
+    const mod = await getBaziModule();
+    console.log(`[bazi-server] Calling ${tool} with:`, JSON.stringify(params));
 
-    let result = null;
-
-    // Try calling as a function directly
-    if (typeof tools[tool] === 'function') {
-      result = await tools[tool](params);
-    } else if (tools.default && typeof tools.default[tool] === 'function') {
-      result = await tools.default[tool](params);
-    } else {
-      // List what's available
-      const available = Object.keys(tools);
-      console.log('Available exports:', available);
-      return res.status(404).json({ 
-        error: `Tool "${tool}" not found`,
-        available 
-      });
+    if (typeof mod[tool] !== 'function') {
+      return res.status(404).json({ error: `Tool "${tool}" not found`, available: Object.keys(mod) });
     }
 
-    console.log(`[bazi-server] ${tool} result:`, JSON.stringify(result).slice(0, 300));
+    // bazi-mcp tools expect individual args, not an object
+    // Try calling with the params object first, then spread if it fails
+    let result;
+    try {
+      result = await mod[tool](params);
+    } catch(e1) {
+      console.log(`Direct call failed: ${e1.message}, trying spread...`);
+      // Try spreading the params as individual arguments
+      const args = Object.values(params);
+      result = await mod[tool](...args);
+    }
+
+    console.log(`[bazi-server] ${tool} result:`, JSON.stringify(result).slice(0, 400));
     res.json({ success: true, result });
 
   } catch(e) {
-    console.error(`[bazi-server] Error calling ${tool}:`, e.message);
+    console.error(`[bazi-server] Error in ${tool}:`, e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── GET /tools ── list available tools
-app.get('/tools', async (req, res) => {
+// POST /inspect — inspect what a tool expects
+app.get('/inspect/:tool', async (req, res) => {
   try {
-    const tools = await getBaziTools();
-    res.json({ tools: Object.keys(tools) });
+    const mod = await getBaziModule();
+    const fn = mod[req.params.tool];
+    if (!fn) return res.status(404).json({ error: 'Tool not found' });
+    res.json({ 
+      name: req.params.tool,
+      toString: fn.toString().slice(0, 500)
+    });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
