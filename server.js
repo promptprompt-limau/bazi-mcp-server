@@ -1,5 +1,4 @@
-// server.js — HTTP wrapper for bazi-mcp v4
-// All tools receive full params object directly
+// server.js — HTTP wrapper for bazi-mcp v5
 const express = require('express');
 const cors = require('cors');
 const app = express();
@@ -17,7 +16,7 @@ async function getBaziModule() {
 }
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'bazi-mcp-server', version: '4', time: new Date().toISOString() });
+  res.json({ status: 'ok', service: 'bazi-mcp-server', version: '5', time: new Date().toISOString() });
 });
 
 app.get('/tools', async (req, res) => {
@@ -40,9 +39,6 @@ app.get('/inspect/:tool', async (req, res) => {
   }
 });
 
-// POST /tools/call
-// Body: { tool: "getBaziDetail", params: { solarDatetime: "...", gender: 1, eightCharProviderSect: 1 } }
-// Body: { tool: "getChineseCalendar", params: { solarDatetime: "..." } }
 app.post('/tools/call', async (req, res) => {
   const { tool, params } = req.body;
   if (!tool) return res.status(400).json({ error: 'tool name required' });
@@ -55,8 +51,22 @@ app.post('/tools/call', async (req, res) => {
       return res.status(404).json({ error: `Tool "${tool}" not found`, available: Object.keys(mod) });
     }
 
-    // Pass full params object directly — all bazi-mcp tools expect a single data object
-    const result = await mod[tool](params);
+    let result;
+
+    if (tool === 'getChineseCalendar' || tool === 'getSolarTimes') {
+      // These expect a date string directly, not an object
+      result = await mod[tool](params.solarDatetime);
+    } else if (tool === 'getBaziDetail') {
+      // getBaziDetail expects a full object { solarDatetime, gender, eightCharProviderSect }
+      result = await mod[tool](params);
+    } else {
+      // Generic fallback - try object first, then string
+      try {
+        result = await mod[tool](params);
+      } catch(e1) {
+        result = await mod[tool](params.solarDatetime || params);
+      }
+    }
 
     console.log(`[bazi-server] ${tool} result:`, JSON.stringify(result).slice(0, 400));
     res.json({ success: true, result });
@@ -68,4 +78,4 @@ app.post('/tools/call', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`bazi-mcp-server v4 running on port ${PORT}`));
+app.listen(PORT, () => console.log(`bazi-mcp-server v5 running on port ${PORT}`));
