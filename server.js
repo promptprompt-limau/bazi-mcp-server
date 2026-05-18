@@ -28,8 +28,19 @@ app.get('/tools', async (req, res) => {
   }
 });
 
+app.get('/inspect/:tool', async (req, res) => {
+  try {
+    const mod = await getBaziModule();
+    const fn = mod[req.params.tool];
+    if (!fn) return res.status(404).json({ error: 'Tool not found' });
+    res.json({ name: req.params.tool, toString: fn.toString().slice(0, 500) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /tools/call
-// Body: { tool: "getBaziDetail", params: { solarDatetime: "...", gender: 1, eightCharProviderSect: 1 } }
+// Body: { tool: "getBaziDetail", params: { solarDatetime: "2026-05-18T12:00:00+08:00", gender: 1, eightCharProviderSect: 1 } }
 app.post('/tools/call', async (req, res) => {
   const { tool, params } = req.body;
   if (!tool) return res.status(400).json({ error: 'tool name required' });
@@ -42,16 +53,24 @@ app.post('/tools/call', async (req, res) => {
       return res.status(404).json({ error: `Tool "${tool}" not found`, available: Object.keys(mod) });
     }
 
-    // bazi-mcp tools expect individual args, not an object
-    // Try calling with the params object first, then spread if it fails
+    // bazi-mcp functions expect a date string directly, not an object
+    // Extract the date from solarDatetime param
     let result;
-    try {
-      result = await mod[tool](params);
-    } catch(e1) {
-      console.log(`Direct call failed: ${e1.message}, trying spread...`);
-      // Try spreading the params as individual arguments
-      const args = Object.values(params);
-      result = await mod[tool](...args);
+    if (tool === 'getChineseCalendar') {
+      // Pass solarDatetime string directly as the date param
+      result = await mod[tool](params.solarDatetime);
+    } else if (tool === 'getBaziDetail') {
+      // getBaziDetail may take (date, gender, sect)
+      result = await mod[tool](params.solarDatetime, params.gender, params.eightCharProviderSect);
+    } else if (tool === 'getSolarTimes') {
+      result = await mod[tool](params.solarDatetime);
+    } else {
+      // Generic: try passing solarDatetime first, then full params object
+      try {
+        result = await mod[tool](params.solarDatetime || params);
+      } catch(e) {
+        result = await mod[tool](params);
+      }
     }
 
     console.log(`[bazi-server] ${tool} result:`, JSON.stringify(result).slice(0, 400));
@@ -59,21 +78,6 @@ app.post('/tools/call', async (req, res) => {
 
   } catch(e) {
     console.error(`[bazi-server] Error in ${tool}:`, e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /inspect — inspect what a tool expects
-app.get('/inspect/:tool', async (req, res) => {
-  try {
-    const mod = await getBaziModule();
-    const fn = mod[req.params.tool];
-    if (!fn) return res.status(404).json({ error: 'Tool not found' });
-    res.json({ 
-      name: req.params.tool,
-      toString: fn.toString().slice(0, 500)
-    });
-  } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
